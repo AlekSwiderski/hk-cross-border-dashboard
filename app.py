@@ -2,10 +2,8 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
-from datetime import datetime, timedelta
-import numpy as np
+from datetime import timedelta
 
-# Page config
 st.set_page_config(
     page_title="Hong Kong Cross-Border Dashboard",
     page_icon="🇭🇰",
@@ -13,7 +11,6 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# Custom CSS
 st.markdown("""
 <style>
     .main-header {
@@ -63,7 +60,6 @@ st.markdown("""
 
 @st.cache_data
 def load_data():
-    """Load and preprocess the passenger traffic data"""
     df = pd.read_csv('daily_passenger_traffic.csv', encoding='utf-8-sig')
 
     # Clean column names
@@ -107,10 +103,8 @@ def load_data():
 
     return df
 
-# Load data
 df = load_data()
 
-# Header
 st.markdown("""
 <div class="main-header">
     <h1>🇭🇰 Hong Kong Cross-Border Flow Dashboard</h1>
@@ -118,15 +112,12 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-# Date range info
 date_min = df['Date'].min()
 date_max = df['Date'].max()
 
-# Sidebar filters
 with st.sidebar:
     st.header("Filters")
 
-    # Date range
     date_range = st.date_input(
         "Date Range",
         value=(date_max - timedelta(days=365), date_max),
@@ -134,22 +125,18 @@ with st.sidebar:
         max_value=date_max.date()
     )
 
-    # Direction filter
     direction = st.selectbox(
         "Direction",
         options=['Both', 'Arrival', 'Departure'],
         index=0
     )
 
-    # Control point filter
     all_control_points = ['All'] + sorted(df['Control Point'].unique().tolist())
     selected_cp = st.selectbox("Control Point", options=all_control_points, index=0)
 
-    # Transport mode filter
     all_modes = ['All'] + sorted(df['Transport_Mode'].unique().tolist())
     selected_mode = st.selectbox("Transport Mode", options=all_modes, index=0)
 
-# Apply filters
 filtered_df = df.copy()
 
 if len(date_range) == 2:
@@ -167,23 +154,15 @@ if selected_cp != 'All':
 if selected_mode != 'All':
     filtered_df = filtered_df[filtered_df['Transport_Mode'] == selected_mode]
 
-# KPI Calculations
 total_passengers = filtered_df['Total'].sum()
 total_hk_residents = filtered_df['Hong Kong Residents'].sum()
 total_mainland = filtered_df['Mainland Visitors'].sum()
 total_others = filtered_df['Other Visitors'].sum()
-
-# Daily average
 days_in_range = (filtered_df['Date'].max() - filtered_df['Date'].min()).days + 1
 daily_avg = total_passengers / max(days_in_range, 1)
-
-# Mainland visitor percentage
 mainland_pct = (total_mainland / total_passengers * 100) if total_passengers > 0 else 0
-
-# Busiest control point
 busiest_cp = filtered_df.groupby('Control Point')['Total'].sum().idxmax() if len(filtered_df) > 0 else "N/A"
 
-# KPI Cards Row
 st.markdown("### Key Metrics")
 col1, col2, col3, col4, col5, col6 = st.columns(6)
 
@@ -207,21 +186,17 @@ with col6:
 
 st.markdown("---")
 
-# Main Charts
 tab1, tab2, tab3, tab4, tab5 = st.tabs(["📈 Trends", "🚉 Control Points", "👥 Passenger Mix", "🗓️ Patterns", "📊 Data"])
 
 with tab1:
     st.markdown("### Daily Traffic Trends")
 
-    # Aggregate daily totals
     daily_totals = filtered_df.groupby('Date').agg({
         'Total': 'sum',
         'Hong Kong Residents': 'sum',
         'Mainland Visitors': 'sum',
         'Other Visitors': 'sum'
     }).reset_index()
-
-    # Add 7-day rolling average
     daily_totals['7-Day Avg'] = daily_totals['Total'].rolling(window=7, min_periods=1).mean()
 
     fig = go.Figure()
@@ -254,7 +229,6 @@ with tab1:
 
     st.plotly_chart(fig, use_container_width=True)
 
-    # Monthly comparison
     col1, col2 = st.columns(2)
 
     with col1:
@@ -283,10 +257,6 @@ with tab1:
     with col2:
         st.markdown("### Year-over-Year Recovery")
         yearly = filtered_df.groupby('Year')['Total'].sum().reset_index()
-
-        # Calculate YoY change
-        yearly['YoY_Change'] = yearly['Total'].pct_change() * 100
-        yearly['Color'] = yearly['YoY_Change'].apply(lambda x: '#28a745' if x > 0 else '#dc3545')
 
         fig_yearly = go.Figure()
 
@@ -345,10 +315,7 @@ with tab2:
         fig_mode.update_layout(height=400, showlegend=False)
         st.plotly_chart(fig_mode, use_container_width=True)
 
-    # Control point trends over time
     st.markdown("### Control Point Trends Over Time")
-
-    # Top 5 control points
     top_5_cp = filtered_df.groupby('Control Point')['Total'].sum().nlargest(5).index.tolist()
     cp_trends = filtered_df[filtered_df['Control Point'].isin(top_5_cp)].groupby(
         [pd.Grouper(key='Date', freq='M'), 'Control Point']
@@ -415,7 +382,6 @@ with tab3:
         )
         st.plotly_chart(fig_dir, use_container_width=True)
 
-    # Passenger type trends
     st.markdown("### Passenger Type Trends Over Time")
 
     monthly_by_type = filtered_df.groupby(pd.Grouper(key='Date', freq='M')).agg({
@@ -511,10 +477,7 @@ with tab4:
         )
         st.plotly_chart(fig_month, use_container_width=True)
 
-    # Heatmap
     st.markdown("#### Traffic Heatmap: Day of Week × Control Point")
-
-    # Get top 8 control points for readability
     top_8_cp = filtered_df.groupby('Control Point')['Total'].sum().nlargest(8).index.tolist()
     heatmap_data = filtered_df[filtered_df['Control Point'].isin(top_8_cp)].groupby(
         ['Day_of_Week', 'Control Point']
@@ -538,7 +501,6 @@ with tab4:
 with tab5:
     st.markdown("### Raw Data")
 
-    # Summary stats
     col1, col2, col3 = st.columns(3)
     with col1:
         st.info(f"📅 Date Range: {date_min.strftime('%Y-%m-%d')} to {date_max.strftime('%Y-%m-%d')}")
@@ -547,7 +509,6 @@ with tab5:
     with col3:
         st.info(f"📊 Total Records: {len(filtered_df):,}")
 
-    # Show data
     st.dataframe(
         filtered_df[['Date', 'Control Point', 'Arrival / Departure', 'Hong Kong Residents',
                      'Mainland Visitors', 'Other Visitors', 'Total']].sort_values('Date', ascending=False),
@@ -555,7 +516,6 @@ with tab5:
         height=500
     )
 
-    # Download button
     csv = filtered_df.to_csv(index=False)
     st.download_button(
         label="📥 Download Filtered Data as CSV",
@@ -564,7 +524,6 @@ with tab5:
         mime="text/csv"
     )
 
-# Footer
 st.markdown("---")
 st.markdown("""
 <div style='text-align: center; color: #666; padding: 20px;'>
