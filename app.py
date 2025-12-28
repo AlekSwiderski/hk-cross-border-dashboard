@@ -186,7 +186,7 @@ with col6:
 
 st.markdown("---")
 
-tab1, tab2, tab3, tab4, tab5 = st.tabs(["📈 Trends", "🚉 Control Points", "👥 Passenger Mix", "🗓️ Patterns", "📊 Data"])
+tab1, tab2, tab3, tab4, tab5 = st.tabs(["Trends", "Control Points", "Passenger Mix", "Patterns", "Data"])
 
 with tab1:
     st.markdown("### Daily Traffic Trends")
@@ -503,11 +503,11 @@ with tab5:
 
     col1, col2, col3 = st.columns(3)
     with col1:
-        st.info(f"📅 Date Range: {date_min.strftime('%Y-%m-%d')} to {date_max.strftime('%Y-%m-%d')}")
+        st.info(f"Date Range: {date_min.strftime('%Y-%m-%d')} to {date_max.strftime('%Y-%m-%d')}")
     with col2:
-        st.info(f"📍 Control Points: {df['Control Point'].nunique()}")
+        st.info(f"Control Points: {df['Control Point'].nunique()}")
     with col3:
-        st.info(f"📊 Total Records: {len(filtered_df):,}")
+        st.info(f"Total Records: {len(filtered_df):,}")
 
     st.dataframe(
         filtered_df[['Date', 'Control Point', 'Arrival / Departure', 'Hong Kong Residents',
@@ -518,7 +518,7 @@ with tab5:
 
     csv = filtered_df.to_csv(index=False)
     st.download_button(
-        label="📥 Download Filtered Data as CSV",
+        label="Download Filtered Data as CSV",
         data=csv,
         file_name="hk_border_traffic_filtered.csv",
         mime="text/csv"
