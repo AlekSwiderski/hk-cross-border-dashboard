@@ -6,7 +6,6 @@ from datetime import timedelta
 
 st.set_page_config(
     page_title="Hong Kong Cross-Border Dashboard",
-    page_icon="🇭🇰",
     layout="wide",
     initial_sidebar_state="collapsed"
 )
@@ -62,10 +61,8 @@ st.markdown("""
 def load_data():
     df = pd.read_csv('daily_passenger_traffic.csv', encoding='utf-8-sig')
 
-    # Clean column names
     df.columns = df.columns.str.strip()
 
-    # Parse date
     df['Date'] = pd.to_datetime(df['Date'], format='%d-%m-%Y')
     df['Year'] = df['Date'].dt.year
     df['Month'] = df['Date'].dt.month
@@ -73,11 +70,9 @@ def load_data():
     df['Day_of_Week'] = df['Date'].dt.day_name()
     df['Week'] = df['Date'].dt.isocalendar().week
 
-    # Clean numeric columns
     for col in ['Hong Kong Residents', 'Mainland Visitors', 'Other Visitors', 'Total']:
         df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0).astype(int)
 
-    # Categorize control points by mode
     air_points = ['Airport']
     rail_points = ['Express Rail Link West Kowloon', 'Hung Hom', 'Lo Wu', 'Lok Ma Chau Spur Line']
     bridge_points = ['Hong Kong-Zhuhai-Macao Bridge']
