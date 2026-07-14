@@ -1,529 +1,304 @@
-import streamlit as st
-import pandas as pd
-import plotly.express as px
-import plotly.graph_objects as go
 from datetime import timedelta
+from pathlib import Path
 
-st.set_page_config(
-    page_title="Hong Kong Cross-Border Dashboard",
-    layout="wide",
-    initial_sidebar_state="collapsed"
+import pandas as pd
+import plotly.graph_objects as go
+import streamlit as st
+
+from dashboard_data import (
+    PASSENGER_COLUMNS,
+    filter_traffic,
+    load_dashboard_data,
+    weekday_direction_average,
 )
 
-st.markdown("""
-<style>
-    .main-header {
-        background: linear-gradient(135deg, #dc3545, #c82333);
-        color: white;
-        padding: 20px;
-        border-radius: 10px;
-        margin-bottom: 20px;
-        text-align: center;
-    }
-    .main-header h1 {
-        margin: 0;
-        font-size: 2.2rem;
-    }
-    .main-header p {
-        margin: 5px 0 0 0;
-        opacity: 0.9;
-    }
-    .kpi-card {
-        background: white;
-        border-radius: 10px;
-        padding: 20px;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-        text-align: center;
-        border-left: 4px solid #dc3545;
-    }
-    .kpi-value {
-        font-size: 2rem;
-        font-weight: bold;
-        color: #dc3545;
-    }
-    .kpi-label {
-        font-size: 0.9rem;
-        color: #666;
-        text-transform: uppercase;
-    }
-    .section-header {
-        border-bottom: 2px solid #dc3545;
-        padding-bottom: 10px;
-        margin-bottom: 20px;
-    }
-    div[data-testid="stMetricValue"] {
-        font-size: 1.8rem;
-    }
-</style>
-""", unsafe_allow_html=True)
 
-@st.cache_data
-def load_data():
-    df = pd.read_csv('daily_passenger_traffic.csv', encoding='utf-8-sig')
+ROOT = Path(__file__).parent
+ARRIVAL_COLOR = "#2d6473"
+DEPARTURE_COLOR = "#b84a3d"
+INK = "#17212b"
+PAPER = "#f3f0e8"
 
-    df.columns = df.columns.str.strip()
+st.set_page_config(
+    page_title="Hong Kong border movements",
+    page_icon=":material/passport:",
+    layout="wide",
+    initial_sidebar_state="collapsed",
+)
 
-    df['Date'] = pd.to_datetime(df['Date'], format='%d-%m-%Y')
-    df['Year'] = df['Date'].dt.year
-    df['Month'] = df['Date'].dt.month
-    df['Month_Name'] = df['Date'].dt.month_name()
-    df['Day_of_Week'] = df['Date'].dt.day_name()
-    df['Week'] = df['Date'].dt.isocalendar().week
 
-    for col in ['Hong Kong Residents', 'Mainland Visitors', 'Other Visitors', 'Total']:
-        df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0).astype(int)
+def inject_styles() -> None:
+    st.markdown(
+        """
+        <style>
+        :root {
+            --ink: #17212b;
+            --muted: #62666a;
+            --paper: #f3f0e8;
+            --card: #fbfaf6;
+            --rule: #d4cec1;
+            --red: #b84a3d;
+            --blue: #2d6473;
+        }
+        .stApp { background: var(--paper); color: var(--ink); }
+        .block-container { max-width: 1210px; padding-top: 2.2rem; padding-bottom: 3rem; }
+        [data-testid="stHeader"] { background: rgba(243, 240, 232, .94); }
+        [data-testid="stToolbar"], #MainMenu, footer { display: none; }
+        h1, h2, h3 { font-family: Georgia, "Times New Roman", serif !important; color: var(--ink); }
+        h1 { font-size: clamp(2.7rem, 6vw, 5rem) !important; line-height: .98; letter-spacing: -.045em; }
+        h2 { letter-spacing: -.025em; }
+        p, label, button, input, [data-testid="stMetric"] { font-family: "Trebuchet MS", Verdana, sans-serif !important; }
+        .eyebrow { color: var(--red); font: 700 .76rem "Trebuchet MS", sans-serif; letter-spacing: .14em; text-transform: uppercase; }
+        .intro { color: var(--muted); font: 1.05rem/1.6 "Trebuchet MS", sans-serif; max-width: 780px; margin: .7rem 0 1.4rem; }
+        .freshness { display: inline-block; border: 1px solid var(--rule); background: var(--card); padding: .42rem .65rem; color: var(--muted); font: .78rem "Trebuchet MS", sans-serif; letter-spacing: .03em; }
+        .section-note { color: var(--muted); max-width: 800px; margin-top: -.35rem; }
+        [data-testid="stMetric"] { background: var(--card); border-top: 3px solid var(--ink); border-bottom: 1px solid var(--rule); padding: .95rem 1rem; min-height: 116px; }
+        [data-testid="stMetricLabel"] { color: var(--muted); }
+        [data-testid="stMetricValue"] { font-family: Georgia, "Times New Roman", serif !important; font-size: 2rem; letter-spacing: -.035em; }
+        button[data-baseweb="tab"] { padding-left: .25rem; padding-right: 1.4rem; font-weight: 600; }
+        button[data-baseweb="tab"][aria-selected="true"] { color: var(--red); }
+        [data-testid="stDataFrame"] { border: 1px solid var(--rule); }
+        .source-box { margin-top: 1.5rem; padding: 1rem 0; border-top: 1px solid var(--rule); color: var(--muted); font: .82rem/1.55 "Trebuchet MS", sans-serif; }
+        @media (max-width: 700px) {
+            .block-container { padding: 1.25rem 1rem 2rem; }
+            h1 { font-size: 2.75rem !important; }
+            [data-testid="stMetric"] { min-height: 96px; }
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
 
-    air_points = ['Airport']
-    rail_points = ['Express Rail Link West Kowloon', 'Hung Hom', 'Lo Wu', 'Lok Ma Chau Spur Line']
-    bridge_points = ['Hong Kong-Zhuhai-Macao Bridge']
-    land_points = ['Lok Ma Chau', 'Man Kam To', 'Sha Tau Kok', 'Shenzhen Bay', 'Heung Yuen Wai']
-    sea_points = ['China Ferry Terminal', 'Harbour Control', 'Kai Tak Cruise Terminal',
-                  'Macau Ferry Terminal', 'Tuen Mun Ferry Terminal']
 
-    def categorize_mode(cp):
-        if cp in air_points:
-            return 'Air'
-        elif cp in rail_points:
-            return 'Rail'
-        elif cp in bridge_points:
-            return 'Bridge'
-        elif cp in land_points:
-            return 'Land'
-        elif cp in sea_points:
-            return 'Sea'
-        else:
-            return 'Other'
+def base_layout(height: int = 420) -> dict:
+    return dict(
+        height=height,
+        margin=dict(l=8, r=18, t=24, b=8),
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        font=dict(family="Trebuchet MS", color=INK),
+        hoverlabel=dict(bgcolor=INK, font_color="white", bordercolor=INK),
+    )
 
-    df['Transport_Mode'] = df['Control Point'].apply(categorize_mode)
 
-    return df
+def compact_number(value: float) -> str:
+    if value >= 1_000_000_000:
+        return f"{value / 1_000_000_000:.2f}bn"
+    if value >= 1_000_000:
+        return f"{value / 1_000_000:.1f}m"
+    if value >= 1_000:
+        return f"{value / 1_000:.1f}k"
+    return f"{value:,.0f}"
 
-df = load_data()
 
-st.markdown("""
-<div class="main-header">
-    <h1>🇭🇰 Hong Kong Cross-Border Flow Dashboard</h1>
-    <p>Daily Immigration Statistics from All Control Points | Data: Immigration Department</p>
-</div>
-""", unsafe_allow_html=True)
+inject_styles()
+traffic, live_source = load_dashboard_data(ROOT)
 
-date_min = df['Date'].min()
-date_max = df['Date'].max()
+date_min = traffic["Date"].min()
+date_max = traffic["Date"].max()
 
-with st.sidebar:
-    st.header("Filters")
+st.markdown('<div class="eyebrow">Immigration Department daily statistics</div>', unsafe_allow_html=True)
+st.title("Hong Kong border movements")
+st.markdown(
+    '<div class="intro">Inbound and outbound passenger movements at Hong Kong control points. Counts refer to immigration clearances, so one person can appear more than once across the selected period.</div>',
+    unsafe_allow_html=True,
+)
+source_text = "Official daily feed" if live_source else "Repository snapshot"
+st.markdown(
+    f'<span class="freshness">{source_text} · data through {date_max.strftime("%d %b %Y")}</span>',
+    unsafe_allow_html=True,
+)
 
-    date_range = st.date_input(
-        "Date Range",
-        value=(date_max - timedelta(days=365), date_max),
+st.markdown("<br>", unsafe_allow_html=True)
+filter_cols = st.columns([1.65, 1, 1, 1.3])
+with filter_cols[0]:
+    chosen_dates = st.date_input(
+        "Date range",
+        value=(date_max.date() - timedelta(days=89), date_max.date()),
         min_value=date_min.date(),
-        max_value=date_max.date()
+        max_value=date_max.date(),
     )
+with filter_cols[1]:
+    direction = st.selectbox("Direction", ["Both", "Arrival", "Departure"])
+with filter_cols[2]:
+    mode = st.selectbox("Mode", ["All"] + sorted(traffic["Mode"].unique().tolist()))
+with filter_cols[3]:
+    control_point = st.selectbox("Control point", ["All"] + sorted(traffic["Control Point"].unique().tolist()))
 
-    direction = st.selectbox(
-        "Direction",
-        options=['Both', 'Arrival', 'Departure'],
-        index=0
+if len(chosen_dates) != 2:
+    st.info("Choose a start and end date.")
+    st.stop()
+
+start_date, end_date = map(pd.Timestamp, chosen_dates)
+filtered = filter_traffic(traffic, start_date, end_date, direction, mode, control_point)
+if filtered.empty:
+    st.warning("No published movements match these filters.")
+    st.stop()
+
+calendar = pd.date_range(start_date, end_date, freq="D")
+daily = filtered.groupby("Date", as_index=False)["Total"].sum().set_index("Date").reindex(calendar, fill_value=0)
+daily.index.name = "Date"
+daily = daily.reset_index()
+daily["7-day average"] = daily["Total"].rolling(7, min_periods=1).mean()
+
+total_movements = int(filtered["Total"].sum())
+average_daily = float(daily["Total"].mean())
+resident_share = filtered["Hong Kong Residents"].sum() / total_movements if total_movements else 0
+busiest_point = filtered.groupby("Control Point")["Total"].sum().idxmax()
+
+st.markdown("<br>", unsafe_allow_html=True)
+metrics = st.columns(4)
+metrics[0].metric("Passenger movements", compact_number(total_movements), help="Arrival and departure clearances in the selected period.")
+metrics[1].metric("Average per day", compact_number(average_daily), help="Selected movements divided by calendar days in the date range.")
+metrics[2].metric("Hong Kong resident share", f"{resident_share:.1%}")
+metrics[3].metric("Busiest control point", busiest_point)
+
+st.markdown("<br>", unsafe_allow_html=True)
+overview_tab, mix_tab, pattern_tab, data_tab = st.tabs(["Overview", "Passenger mix", "Weekly pattern", "Data"])
+
+with overview_tab:
+    st.header("Movement over time")
+    st.markdown(
+        '<p class="section-note">Daily clearances are shown behind a seven-day average to make weekends and public-holiday peaks easier to read.</p>',
+        unsafe_allow_html=True,
     )
-
-    all_control_points = ['All'] + sorted(df['Control Point'].unique().tolist())
-    selected_cp = st.selectbox("Control Point", options=all_control_points, index=0)
-
-    all_modes = ['All'] + sorted(df['Transport_Mode'].unique().tolist())
-    selected_mode = st.selectbox("Transport Mode", options=all_modes, index=0)
-
-filtered_df = df.copy()
-
-if len(date_range) == 2:
-    filtered_df = filtered_df[
-        (filtered_df['Date'].dt.date >= date_range[0]) &
-        (filtered_df['Date'].dt.date <= date_range[1])
-    ]
-
-if direction != 'Both':
-    filtered_df = filtered_df[filtered_df['Arrival / Departure'] == direction]
-
-if selected_cp != 'All':
-    filtered_df = filtered_df[filtered_df['Control Point'] == selected_cp]
-
-if selected_mode != 'All':
-    filtered_df = filtered_df[filtered_df['Transport_Mode'] == selected_mode]
-
-total_passengers = filtered_df['Total'].sum()
-total_hk_residents = filtered_df['Hong Kong Residents'].sum()
-total_mainland = filtered_df['Mainland Visitors'].sum()
-total_others = filtered_df['Other Visitors'].sum()
-days_in_range = (filtered_df['Date'].max() - filtered_df['Date'].min()).days + 1
-daily_avg = total_passengers / max(days_in_range, 1)
-mainland_pct = (total_mainland / total_passengers * 100) if total_passengers > 0 else 0
-busiest_cp = filtered_df.groupby('Control Point')['Total'].sum().idxmax() if len(filtered_df) > 0 else "N/A"
-
-st.markdown("### Key Metrics")
-col1, col2, col3, col4, col5, col6 = st.columns(6)
-
-with col1:
-    st.metric("Total Passengers", f"{total_passengers:,.0f}", help="Total passenger movements in selected period")
-
-with col2:
-    st.metric("Daily Average", f"{daily_avg:,.0f}", help="Average daily passenger movements")
-
-with col3:
-    st.metric("HK Residents", f"{total_hk_residents:,.0f}", help="Hong Kong resident movements")
-
-with col4:
-    st.metric("Mainland Visitors", f"{total_mainland:,.0f}", help="Mainland China visitor movements")
-
-with col5:
-    st.metric("Mainland %", f"{mainland_pct:.1f}%", help="Percentage of Mainland visitors")
-
-with col6:
-    st.metric("Busiest Point", busiest_cp[:15] + "..." if len(busiest_cp) > 15 else busiest_cp, help="Control point with highest traffic")
-
-st.markdown("---")
-
-tab1, tab2, tab3, tab4, tab5 = st.tabs(["Trends", "Control Points", "Passenger Mix", "Patterns", "Data"])
-
-with tab1:
-    st.markdown("### Daily Traffic Trends")
-
-    daily_totals = filtered_df.groupby('Date').agg({
-        'Total': 'sum',
-        'Hong Kong Residents': 'sum',
-        'Mainland Visitors': 'sum',
-        'Other Visitors': 'sum'
-    }).reset_index()
-    daily_totals['7-Day Avg'] = daily_totals['Total'].rolling(window=7, min_periods=1).mean()
-
     fig = go.Figure()
-
-    fig.add_trace(go.Scatter(
-        x=daily_totals['Date'],
-        y=daily_totals['Total'],
-        name='Daily Total',
-        line=dict(color='rgba(220, 53, 69, 0.3)', width=1),
-        fill='tozeroy',
-        fillcolor='rgba(220, 53, 69, 0.1)'
-    ))
-
-    fig.add_trace(go.Scatter(
-        x=daily_totals['Date'],
-        y=daily_totals['7-Day Avg'],
-        name='7-Day Moving Average',
-        line=dict(color='#dc3545', width=3)
-    ))
-
-    fig.update_layout(
-        height=400,
-        hovermode='x unified',
-        legend=dict(orientation='h', yanchor='bottom', y=1.02),
-        xaxis_title='',
-        yaxis_title='Passengers',
-        yaxis=dict(gridcolor='#f0f0f0'),
-        plot_bgcolor='white'
+    fig.add_trace(
+        go.Scatter(
+            x=daily["Date"],
+            y=daily["Total"],
+            mode="lines",
+            name="Daily",
+            line=dict(color="rgba(45,100,115,.25)", width=1),
+            fill="tozeroy",
+            fillcolor="rgba(45,100,115,.06)",
+            hovertemplate="%{x|%d %b %Y}<br>%{y:,.0f} movements<extra></extra>",
+        )
     )
-
-    st.plotly_chart(fig, use_container_width=True)
-
-    col1, col2 = st.columns(2)
-
-    with col1:
-        st.markdown("### Monthly Totals by Year")
-        monthly = filtered_df.groupby(['Year', 'Month_Name', 'Month'])['Total'].sum().reset_index()
-        monthly = monthly.sort_values(['Year', 'Month'])
-
-        fig_monthly = px.bar(
-            monthly,
-            x='Month_Name',
-            y='Total',
-            color='Year',
-            barmode='group',
-            category_orders={'Month_Name': ['January', 'February', 'March', 'April', 'May', 'June',
-                                            'July', 'August', 'September', 'October', 'November', 'December']},
-            color_discrete_sequence=px.colors.sequential.Reds_r
+    fig.add_trace(
+        go.Scatter(
+            x=daily["Date"],
+            y=daily["7-day average"],
+            mode="lines",
+            name="7-day average",
+            line=dict(color=INK, width=2.5),
+            hovertemplate="%{x|%d %b %Y}<br>%{y:,.0f} seven-day average<extra></extra>",
         )
-        fig_monthly.update_layout(
-            height=350,
-            xaxis_title='',
-            yaxis_title='Total Passengers',
-            legend_title='Year'
-        )
-        st.plotly_chart(fig_monthly, use_container_width=True)
-
-    with col2:
-        st.markdown("### Year-over-Year Recovery")
-        yearly = filtered_df.groupby('Year')['Total'].sum().reset_index()
-
-        fig_yearly = go.Figure()
-
-        fig_yearly.add_trace(go.Bar(
-            x=yearly['Year'],
-            y=yearly['Total'],
-            marker_color='#dc3545',
-            name='Total Passengers'
-        ))
-
-        fig_yearly.update_layout(
-            height=350,
-            xaxis_title='Year',
-            yaxis_title='Total Passengers'
-        )
-        st.plotly_chart(fig_yearly, use_container_width=True)
-
-with tab2:
-    st.markdown("### Control Point Analysis")
-
-    col1, col2 = st.columns(2)
-
-    with col1:
-        st.markdown("#### Top Control Points by Traffic")
-        cp_totals = filtered_df.groupby('Control Point')['Total'].sum().sort_values(ascending=True).tail(10).reset_index()
-
-        fig_cp = px.bar(
-            cp_totals,
-            y='Control Point',
-            x='Total',
-            orientation='h',
-            color='Total',
-            color_continuous_scale='Reds'
-        )
-        fig_cp.update_layout(
-            height=400,
-            showlegend=False,
-            xaxis_title='Total Passengers',
-            yaxis_title='',
-            coloraxis_showscale=False
-        )
-        st.plotly_chart(fig_cp, use_container_width=True)
-
-    with col2:
-        st.markdown("#### Traffic by Transport Mode")
-        mode_totals = filtered_df.groupby('Transport_Mode')['Total'].sum().reset_index()
-
-        fig_mode = px.pie(
-            mode_totals,
-            values='Total',
-            names='Transport_Mode',
-            color_discrete_sequence=px.colors.sequential.RdBu,
-            hole=0.4
-        )
-        fig_mode.update_traces(textposition='inside', textinfo='percent+label')
-        fig_mode.update_layout(height=400, showlegend=False)
-        st.plotly_chart(fig_mode, use_container_width=True)
-
-    st.markdown("### Control Point Trends Over Time")
-    top_5_cp = filtered_df.groupby('Control Point')['Total'].sum().nlargest(5).index.tolist()
-    cp_trends = filtered_df[filtered_df['Control Point'].isin(top_5_cp)].groupby(
-        [pd.Grouper(key='Date', freq='M'), 'Control Point']
-    )['Total'].sum().reset_index()
-
-    fig_cp_trend = px.line(
-        cp_trends,
-        x='Date',
-        y='Total',
-        color='Control Point',
-        color_discrete_sequence=px.colors.qualitative.Set1
     )
-    fig_cp_trend.update_layout(
-        height=350,
-        xaxis_title='',
-        yaxis_title='Monthly Passengers',
-        legend=dict(orientation='h', yanchor='bottom', y=1.02)
+    fig.update_layout(**base_layout(430), hovermode="x unified", legend=dict(orientation="h", y=1.04), xaxis_title=None, yaxis_title="Movements")
+    fig.update_xaxes(showgrid=False)
+    fig.update_yaxes(gridcolor="#d8d2c6", zeroline=False)
+    st.plotly_chart(fig, width="stretch", config={"displayModeBar": False})
+
+    st.subheader("Control point share")
+    point_totals = filtered.groupby("Control Point", as_index=False)["Total"].sum().sort_values("Total").tail(10)
+    rank = go.Figure(
+        go.Bar(
+            x=point_totals["Total"],
+            y=point_totals["Control Point"],
+            orientation="h",
+            marker_color=ARRIVAL_COLOR,
+            text=point_totals["Total"].map(compact_number),
+            textposition="outside",
+            hovertemplate="%{y}<br>%{x:,.0f} movements<extra></extra>",
+        )
     )
-    st.plotly_chart(fig_cp_trend, use_container_width=True)
+    rank.update_layout(**base_layout(420), showlegend=False, xaxis_title=None, yaxis_title=None)
+    rank.update_xaxes(visible=False, range=[0, point_totals["Total"].max() * 1.18])
+    rank.update_yaxes(showgrid=False)
+    st.plotly_chart(rank, width="stretch", config={"displayModeBar": False})
 
-with tab3:
-    st.markdown("### Passenger Type Analysis")
-
-    col1, col2 = st.columns(2)
-
-    with col1:
-        st.markdown("#### Passenger Mix")
-        mix_data = pd.DataFrame({
-            'Category': ['HK Residents', 'Mainland Visitors', 'Other Visitors'],
-            'Count': [total_hk_residents, total_mainland, total_others]
-        })
-
-        fig_mix = px.pie(
-            mix_data,
-            values='Count',
-            names='Category',
-            color_discrete_map={
-                'HK Residents': '#3498db',
-                'Mainland Visitors': '#e74c3c',
-                'Other Visitors': '#2ecc71'
-            },
-            hole=0.4
-        )
-        fig_mix.update_traces(textposition='inside', textinfo='percent+label')
-        fig_mix.update_layout(height=400)
-        st.plotly_chart(fig_mix, use_container_width=True)
-
-    with col2:
-        st.markdown("#### Arrival vs Departure")
-        direction_data = filtered_df.groupby('Arrival / Departure')['Total'].sum().reset_index()
-
-        fig_dir = px.bar(
-            direction_data,
-            x='Arrival / Departure',
-            y='Total',
-            color='Arrival / Departure',
-            color_discrete_map={'Arrival': '#28a745', 'Departure': '#dc3545'}
-        )
-        fig_dir.update_layout(
-            height=400,
-            showlegend=False,
-            xaxis_title='',
-            yaxis_title='Total Passengers'
-        )
-        st.plotly_chart(fig_dir, use_container_width=True)
-
-    st.markdown("### Passenger Type Trends Over Time")
-
-    monthly_by_type = filtered_df.groupby(pd.Grouper(key='Date', freq='M')).agg({
-        'Hong Kong Residents': 'sum',
-        'Mainland Visitors': 'sum',
-        'Other Visitors': 'sum'
-    }).reset_index()
-
-    fig_type_trend = go.Figure()
-
-    fig_type_trend.add_trace(go.Scatter(
-        x=monthly_by_type['Date'],
-        y=monthly_by_type['Hong Kong Residents'],
-        name='HK Residents',
-        stackgroup='one',
-        fillcolor='rgba(52, 152, 219, 0.7)',
-        line=dict(color='#3498db')
-    ))
-
-    fig_type_trend.add_trace(go.Scatter(
-        x=monthly_by_type['Date'],
-        y=monthly_by_type['Mainland Visitors'],
-        name='Mainland Visitors',
-        stackgroup='one',
-        fillcolor='rgba(231, 76, 60, 0.7)',
-        line=dict(color='#e74c3c')
-    ))
-
-    fig_type_trend.add_trace(go.Scatter(
-        x=monthly_by_type['Date'],
-        y=monthly_by_type['Other Visitors'],
-        name='Other Visitors',
-        stackgroup='one',
-        fillcolor='rgba(46, 204, 113, 0.7)',
-        line=dict(color='#2ecc71')
-    ))
-
-    fig_type_trend.update_layout(
-        height=400,
-        hovermode='x unified',
-        legend=dict(orientation='h', yanchor='bottom', y=1.02),
-        xaxis_title='',
-        yaxis_title='Passengers'
+with mix_tab:
+    st.header("Who crossed the border")
+    st.markdown(
+        '<p class="section-note">The source separates Hong Kong residents, Mainland visitors and other visitors. The categories describe clearances, not unique people.</p>',
+        unsafe_allow_html=True,
     )
-    st.plotly_chart(fig_type_trend, use_container_width=True)
-
-with tab4:
-    st.markdown("### Traffic Patterns")
-
-    col1, col2 = st.columns(2)
-
-    with col1:
-        st.markdown("#### By Day of Week")
-        dow_order = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
-        dow_data = filtered_df.groupby('Day_of_Week')['Total'].mean().reindex(dow_order).reset_index()
-        dow_data.columns = ['Day', 'Average']
-
-        fig_dow = px.bar(
-            dow_data,
-            x='Day',
-            y='Average',
-            color='Average',
-            color_continuous_scale='Reds'
+    mix_colors = ["#2d6473", "#b84a3d", "#c28b3c"]
+    mix_totals = filtered[PASSENGER_COLUMNS].sum()
+    mix_fig = go.Figure()
+    for column, color in zip(PASSENGER_COLUMNS, mix_colors):
+        mix_fig.add_trace(
+            go.Bar(
+                x=[mix_totals[column]],
+                y=["Passenger mix"],
+                name=column,
+                orientation="h",
+                marker_color=color,
+                text=[f"{mix_totals[column] / total_movements:.1%}"],
+                textposition="inside",
+                hovertemplate=f"{column}<br>%{{x:,.0f}} movements<extra></extra>",
+            )
         )
-        fig_dow.update_layout(
-            height=350,
-            xaxis_title='',
-            yaxis_title='Avg Daily Passengers',
-            coloraxis_showscale=False
+    mix_fig.update_layout(**base_layout(180), barmode="stack", xaxis_visible=False, yaxis_visible=False, legend=dict(orientation="h", y=1.25))
+    st.plotly_chart(mix_fig, width="stretch", config={"displayModeBar": False})
+
+    monthly = filtered.groupby(pd.Grouper(key="Date", freq="MS"), as_index=False)[PASSENGER_COLUMNS].sum()
+    trend = go.Figure()
+    for column, color in zip(PASSENGER_COLUMNS, mix_colors):
+        trend.add_trace(
+            go.Scatter(
+                x=monthly["Date"],
+                y=monthly[column],
+                name=column,
+                mode="lines",
+                stackgroup="mix",
+                line=dict(color=color, width=1.5),
+                hovertemplate=f"{column}<br>%{{y:,.0f}}<extra></extra>",
+            )
         )
-        st.plotly_chart(fig_dow, use_container_width=True)
+    trend.update_layout(**base_layout(420), hovermode="x unified", legend=dict(orientation="h", y=1.04), xaxis_title=None, yaxis_title="Monthly movements")
+    trend.update_xaxes(showgrid=False)
+    trend.update_yaxes(gridcolor="#d8d2c6", zeroline=False)
+    st.plotly_chart(trend, width="stretch", config={"displayModeBar": False})
 
-    with col2:
-        st.markdown("#### By Month")
-        month_order = ['January', 'February', 'March', 'April', 'May', 'June',
-                       'July', 'August', 'September', 'October', 'November', 'December']
-        month_data = filtered_df.groupby('Month_Name')['Total'].mean().reindex(month_order).reset_index()
-        month_data.columns = ['Month', 'Average']
-
-        fig_month = px.bar(
-            month_data,
-            x='Month',
-            y='Average',
-            color='Average',
-            color_continuous_scale='Reds'
-        )
-        fig_month.update_layout(
-            height=350,
-            xaxis_title='',
-            yaxis_title='Avg Daily Passengers',
-            coloraxis_showscale=False,
-            xaxis_tickangle=-45
-        )
-        st.plotly_chart(fig_month, use_container_width=True)
-
-    st.markdown("#### Traffic Heatmap: Day of Week × Control Point")
-    top_8_cp = filtered_df.groupby('Control Point')['Total'].sum().nlargest(8).index.tolist()
-    heatmap_data = filtered_df[filtered_df['Control Point'].isin(top_8_cp)].groupby(
-        ['Day_of_Week', 'Control Point']
-    )['Total'].mean().reset_index()
-
-    heatmap_pivot = heatmap_data.pivot(index='Control Point', columns='Day_of_Week', values='Total')
-    heatmap_pivot = heatmap_pivot.reindex(columns=dow_order)
-
-    fig_heatmap = px.imshow(
-        heatmap_pivot,
-        color_continuous_scale='Reds',
-        aspect='auto'
+with pattern_tab:
+    st.header("Average day by weekday")
+    st.markdown(
+        '<p class="section-note">Each date is totalled before the weekday average is calculated. This avoids understating traffic by averaging individual control-point records.</p>',
+        unsafe_allow_html=True,
     )
-    fig_heatmap.update_layout(
-        height=400,
-        xaxis_title='',
-        yaxis_title=''
+    weekday = weekday_direction_average(filtered)
+    pattern = go.Figure()
+    directions = [direction] if direction != "Both" else ["Arrival", "Departure"]
+    for item in directions:
+        values = weekday.loc[weekday["Arrival / Departure"].eq(item)]
+        pattern.add_trace(
+            go.Bar(
+                x=values["Weekday"],
+                y=values["Average movements"],
+                name=item,
+                marker_color=ARRIVAL_COLOR if item == "Arrival" else DEPARTURE_COLOR,
+                hovertemplate=f"{item}<br>%{{y:,.0f}} average movements<extra></extra>",
+            )
+        )
+    pattern.update_layout(**base_layout(430), barmode="group", legend=dict(orientation="h", y=1.04), xaxis_title=None, yaxis_title="Average movements")
+    pattern.update_xaxes(showgrid=False)
+    pattern.update_yaxes(gridcolor="#d8d2c6", zeroline=False)
+    st.plotly_chart(pattern, width="stretch", config={"displayModeBar": False})
+
+with data_tab:
+    st.header("Published rows")
+    st.markdown(
+        '<p class="section-note">One row is one control point, direction and date. Zeroes are retained because suspended or inactive services are part of the published record.</p>',
+        unsafe_allow_html=True,
     )
-    st.plotly_chart(fig_heatmap, use_container_width=True)
-
-with tab5:
-    st.markdown("### Raw Data")
-
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        st.info(f"Date Range: {date_min.strftime('%Y-%m-%d')} to {date_max.strftime('%Y-%m-%d')}")
-    with col2:
-        st.info(f"Control Points: {df['Control Point'].nunique()}")
-    with col3:
-        st.info(f"Total Records: {len(filtered_df):,}")
-
-    st.dataframe(
-        filtered_df[['Date', 'Control Point', 'Arrival / Departure', 'Hong Kong Residents',
-                     'Mainland Visitors', 'Other Visitors', 'Total']].sort_values('Date', ascending=False),
-        use_container_width=True,
-        height=500
-    )
-
-    csv = filtered_df.to_csv(index=False)
+    display_columns = ["Date", "Control Point", "Mode", "Arrival / Departure"] + PASSENGER_COLUMNS + ["Total"]
+    display = filtered[display_columns].sort_values(["Date", "Control Point"], ascending=[False, True])
+    st.dataframe(display, hide_index=True, width="stretch", height=480)
     st.download_button(
-        label="Download Filtered Data as CSV",
-        data=csv,
-        file_name="hk_border_traffic_filtered.csv",
-        mime="text/csv"
+        "Download selected rows",
+        display.to_csv(index=False).encode("utf-8"),
+        file_name="hk_border_movements.csv",
+        mime="text/csv",
     )
 
-st.markdown("---")
-st.markdown("""
-<div style='text-align: center; color: #666; padding: 20px;'>
-    <p>Data Source: <a href='https://data.gov.hk/en-data/dataset/hk-immd-set5-statistics-daily-passenger-traffic' target='_blank'>
-    Hong Kong Immigration Department via DATA.GOV.HK</a></p>
-    <p>Dashboard updates daily with official government data</p>
-</div>
-""", unsafe_allow_html=True)
+st.markdown(
+    """
+    <div class="source-box">
+    Source: Hong Kong Immigration Department, Statistics on Daily Passenger Traffic. The official file is requested when the app starts and cached for one hour. The repository copy is used if that request fails.<br>
+    Built by Alek Swiderski.
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
